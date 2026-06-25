@@ -300,9 +300,16 @@ async function saveScore(card){
   const id=card.dataset.id;
   const m=matches.find(x=>x.id===id);
   if(new Date()>=new Date(m.kickoff)){toast('Ese partido ya cerró 🔒');renderMatches();return;}
-  const g1=parseInt(card.querySelector('[data-g1]').value,10);
-  const g2=parseInt(card.querySelector('[data-g2]').value,10);
-  if(!Number.isInteger(g1)||!Number.isInteger(g2)||g1<0||g2<0){toast('Poné los goles de los dos equipos');return;}
+  const in1=card.querySelector('[data-g1]'), in2=card.querySelector('[data-g2]');
+  // Un casillero en blanco cuenta como 0 (pero no ambos en blanco)
+  if(in1.value.trim()==='' && in2.value.trim()===''){toast('Poné el marcador de los dos equipos');return;}
+  if(in1.value.trim()==='') in1.value='0';
+  if(in2.value.trim()==='') in2.value='0';
+  const g1=parseInt(in1.value,10);
+  const g2=parseInt(in2.value,10);
+  if(!Number.isInteger(g1)||!Number.isInteger(g2)||g1<0||g2<0){toast('Poné goles válidos (0 o más)');return;}
+  // Si quedó empate tras rellenar, refrescá la sección de penales por si apareció
+  card.querySelector('[data-g1]').dispatchEvent(new Event('input'));
   // Si es empate, es obligatorio elegir quién gana por penales
   let pen_pick=null;
   if(g1===g2){
