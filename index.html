@@ -131,7 +131,7 @@
       <button class="tab hidden" data-view="admin" id="tab-admin">Admin</button>
     </div>
     <div class="rules" id="view-partidos-rules">
-      <b>Puntos:</b> 3 si acertás el resultado (gana o empata) · +2 si pegás el marcador exacto (5 en total) · +3 si hay empate y acertás quién pasa por penales.
+      <b>Puntos:</b> +3 si acertás quién pasa a la siguiente ronda · +2 si acertás el marcador exacto (5 en total). Son independientes.
     </div>
     <div id="view-partidos"></div>
     <div id="view-tabla" class="hidden"></div>
@@ -231,10 +231,10 @@ function setView(v){
 async function loadAll(){
   const [{data:ms},{data:ps}]=await Promise.all([
     sb.from('matches').select('*').order('kickoff',{ascending:true}),
-    sb.from('predictions').select('match_id,g1,g2,pen_pick')
+    sb.from('predictions').select('match_id,g1,g2,advance_pick')
   ]);
   matches=ms||[]; mypreds={};
-  (ps||[]).forEach(p=>mypreds[p.match_id]={g1:p.g1,g2:p.g2,pen_pick:p.pen_pick});
+  (ps||[]).forEach(p=>mypreds[p.match_id]={g1:p.g1,g2:p.g2,advance_pick:p.advance_pick});
   renderMatches();
   if(isAdmin && !$('view-admin').classList.contains('hidden')) renderAdmin();
 }
@@ -247,42 +247,31 @@ function renderMatches(){
   if(!act.length){box.innerHTML=`<div class="empty">Todavía no hay partidos abiertos.<br>Volvé pronto ⚽</div>`;return;}
   box.innerHTML=act.map(m=>{
     const p=mypreds[m.id];
-    const empate = p && p.g1===p.g2 && p.g1!=='' && p.g1!=null;
     return `<div class="card" data-id="${m.id}" data-k="${m.kickoff}">
       <div class="meta"><span class="chip">${esc(m.fase||'')}</span><span>${FMT.format(new Date(m.kickoff))}</span><span class="cd" data-cd>—</span></div>
       <div class="teams"><div class="team">${esc(m.equipo1)}</div><div class="vs">VS</div><div class="team">${esc(m.equipo2)}</div></div>
+      <div class="pen" data-adv>
+        <div class="pen-leg"><b>¿Quién pasa a la siguiente ronda?</b> (+3 si acertás)</div>
+        <div class="pen-opts">
+          <button type="button" class="pen-opt ${p&&p.advance_pick==='equipo1'?'sel':''}" data-adv-opt="equipo1">${esc(m.equipo1)}</button>
+          <button type="button" class="pen-opt ${p&&p.advance_pick==='equipo2'?'sel':''}" data-adv-opt="equipo2">${esc(m.equipo2)}</button>
+        </div>
+      </div>
+      <div class="pen-leg" style="color:var(--muted);margin:2px 2px 6px"><b>Marcador</b> de los 90/120 min (+2 si acertás el exacto)</div>
       <div class="score">
         <input type="number" inputmode="numeric" min="0" max="30" data-g1 value="${p?p.g1:''}" placeholder="0">
         <span class="dash">–</span>
         <input type="number" inputmode="numeric" min="0" max="30" data-g2 value="${p?p.g2:''}" placeholder="0">
       </div>
-      <div class="pen ${empate?'':'hidden'}" data-pen>
-        <div class="pen-leg"><b>En eliminatorias no hay empate:</b> si terminan iguales, se define por penales. ¿Quién avanza?</div>
-        <div class="pen-opts">
-          <button type="button" class="pen-opt ${p&&p.pen_pick==='equipo1'?'sel':''}" data-pen-opt="equipo1">${esc(m.equipo1)}</button>
-          <button type="button" class="pen-opt ${p&&p.pen_pick==='equipo2'?'sel':''}" data-pen-opt="equipo2">${esc(m.equipo2)}</button>
-        </div>
-      </div>
       <button class="btn" data-save>Guardar pronóstico</button>
-      <div class="saved" data-saved>${p?savedText(p):''}</div>
+      <div class="saved" data-saved>${p?savedText(p,m):''}</div>
     </div>`;
   }).join('');
   box.querySelectorAll('.card').forEach(c=>{
-    const g1=c.querySelector('[data-g1]'), g2=c.querySelector('[data-g2]');
-    const pen=c.querySelector('[data-pen]');
-    // mostrar/ocultar penales al cambiar el marcador
-    const refreshPen=()=>{
-      const v1=g1.value, v2=g2.value;
-      const emp = v1!=='' && v2!=='' && parseInt(v1,10)===parseInt(v2,10);
-      pen.classList.toggle('hidden',!emp);
-      if(!emp) pen.querySelectorAll('.pen-opt').forEach(b=>b.classList.remove('sel'));
-    };
-    g1.addEventListener('input',refreshPen);
-    g2.addEventListener('input',refreshPen);
-    // selección de clasificado por penales
-    pen.querySelectorAll('.pen-opt').forEach(b=>{
+    const adv=c.querySelector('[data-adv]');
+    adv.querySelectorAll('.pen-opt').forEach(b=>{
       b.onclick=()=>{
-        pen.querySelectorAll('.pen-opt').forEach(x=>x.classList.remove('sel'));
+        adv.querySelectorAll('.pen-opt').forEach(x=>x.classList.remove('sel'));
         b.classList.add('sel');
       };
     });
@@ -290,39 +279,35 @@ function renderMatches(){
   });
   tick();
 }
-function savedText(p){
-  if(!p||p.g1==null) return '';
-  let t=`Tu pronóstico: ${p.g1} – ${p.g2}`;
-  if(p.g1===p.g2 && p.pen_pick) t+=` · penales: ${p.pen_pick==='equipo1'?'gana local':'gana visita'}`;
-  return t;
+function savedText(p,m){
+  if(!p) return '';
+  let parts=[];
+  if(p.advance_pick && m) parts.push('pasa '+(p.advance_pick==='equipo1'?m.equipo1:m.equipo2));
+  if(p.g1!=null && p.g2!=null) parts.push(`marcador ${p.g1} – ${p.g2}`);
+  return parts.length ? 'Tu pronóstico: '+parts.join(' · ') : '';
 }
 async function saveScore(card){
   const id=card.dataset.id;
   const m=matches.find(x=>x.id===id);
   if(new Date()>=new Date(m.kickoff)){toast('Ese partido ya cerró 🔒');renderMatches();return;}
+  // 1) Quién pasa (obligatorio)
+  const advSel=card.querySelector('[data-adv] .pen-opt.sel');
+  if(!advSel){toast('Marcá quién pasa a la siguiente ronda');return;}
+  const advance_pick=advSel.dataset.advOpt;
+  // 2) Marcador: casillero en blanco cuenta como 0 (pero no ambos en blanco)
   const in1=card.querySelector('[data-g1]'), in2=card.querySelector('[data-g2]');
-  // Un casillero en blanco cuenta como 0 (pero no ambos en blanco)
   if(in1.value.trim()==='' && in2.value.trim()===''){toast('Poné el marcador de los dos equipos');return;}
   if(in1.value.trim()==='') in1.value='0';
   if(in2.value.trim()==='') in2.value='0';
   const g1=parseInt(in1.value,10);
   const g2=parseInt(in2.value,10);
   if(!Number.isInteger(g1)||!Number.isInteger(g2)||g1<0||g2<0){toast('Poné goles válidos (0 o más)');return;}
-  // Si quedó empate tras rellenar, refrescá la sección de penales por si apareció
-  card.querySelector('[data-g1]').dispatchEvent(new Event('input'));
-  // Si es empate, es obligatorio elegir quién gana por penales
-  let pen_pick=null;
-  if(g1===g2){
-    const sel=card.querySelector('.pen-opt.sel');
-    if(!sel){toast('Empate: marcá quién avanza por penales');return;}
-    pen_pick=sel.dataset.penOpt;
-  }
   const {error}=await sb.from('predictions').upsert(
-    {user_id:user.id,match_id:id,g1,g2,pen_pick,updated_at:new Date().toISOString()},
+    {user_id:user.id,match_id:id,g1,g2,advance_pick,updated_at:new Date().toISOString()},
     {onConflict:'user_id,match_id'});
   if(error){toast('No se pudo guardar: '+error.message);return;}
-  mypreds[id]={g1,g2,pen_pick};
-  card.querySelector('[data-saved]').textContent=savedText(mypreds[id]);
+  mypreds[id]={g1,g2,advance_pick};
+  card.querySelector('[data-saved]').textContent=savedText(mypreds[id],m);
   toast('Guardado ✅');
 }
 
@@ -350,7 +335,7 @@ async function loadTabla(){
   if(!data||!data.length){box.innerHTML=`<div class="empty">Aún no hay resultados cargados.<br>La tabla aparece cuando se carguen los primeros marcadores.</div>`;return;}
   box.innerHTML=data.map((r,i)=>`<div class="row ${i<3?'top'+(i+1):''}">
     <div class="rank">${i+1}</div>
-    <div class="rname">${esc(r.nombre)}<div class="rsub">${r.aciertos} aciertos · ${r.exactos} exactos · ${r.penales||0} penales</div></div>
+    <div class="rname">${esc(r.nombre)}<div class="rsub">${r.pasa_ok||0} aciertos de quién pasa · ${r.exactos||0} marcadores exactos</div></div>
     <div class="pts">${r.puntos}<small>pts</small></div>
   </div>`).join('');
 }
@@ -379,11 +364,11 @@ function renderAdmin(){
         <span class="dash" style="padding-bottom:10px">–</span>
         <div><label>Goles ${esc(m.equipo2)}</label><input type="number" min="0" data-r2 value="${m.rg2??''}" placeholder="–"></div>
       </div>
-      <div class="pen ${(m.rg1!=null&&m.rg1===m.rg2)?'':'hidden'}" data-apen>
-        <div class="pen-leg"><b>Empate → penales.</b> ¿Quién clasificó?</div>
+      <div class="pen" data-aadv>
+        <div class="pen-leg"><b>¿Quién pasó a la siguiente ronda?</b> (cargalo cuando termine el partido)</div>
         <div class="pen-opts">
-          <button type="button" class="pen-opt ${m.pen_winner==='equipo1'?'sel':''}" data-apen-opt="equipo1">${esc(m.equipo1)}</button>
-          <button type="button" class="pen-opt ${m.pen_winner==='equipo2'?'sel':''}" data-apen-opt="equipo2">${esc(m.equipo2)}</button>
+          <button type="button" class="pen-opt ${m.advanced==='equipo1'?'sel':''}" data-aadv-opt="equipo1">${esc(m.equipo1)}</button>
+          <button type="button" class="pen-opt ${m.advanced==='equipo2'?'sel':''}" data-aadv-opt="equipo2">${esc(m.equipo2)}</button>
         </div>
       </div>
       <label style="margin-top:8px"><input type="checkbox" data-act ${m.activo?'checked':''} style="width:auto;margin-right:6px">Visible para jugadores (activo)</label>
@@ -410,18 +395,9 @@ function renderAdmin(){
 
   $('n-add').onclick=addMatch;
   box.querySelectorAll('.arow').forEach(r=>{
-    const r1=r.querySelector('[data-r1]'), r2=r.querySelector('[data-r2]');
-    const apen=r.querySelector('[data-apen]');
-    const refreshApen=()=>{
-      const v1=r1.value, v2=r2.value;
-      const emp = v1!=='' && v2!=='' && parseInt(v1,10)===parseInt(v2,10);
-      apen.classList.toggle('hidden',!emp);
-      if(!emp) apen.querySelectorAll('.pen-opt').forEach(b=>b.classList.remove('sel'));
-    };
-    r1.addEventListener('input',refreshApen);
-    r2.addEventListener('input',refreshApen);
-    apen.querySelectorAll('.pen-opt').forEach(b=>{
-      b.onclick=()=>{apen.querySelectorAll('.pen-opt').forEach(x=>x.classList.remove('sel'));b.classList.add('sel');};
+    const aadv=r.querySelector('[data-aadv]');
+    aadv.querySelectorAll('.pen-opt').forEach(b=>{
+      b.onclick=()=>{aadv.querySelectorAll('.pen-opt').forEach(x=>x.classList.remove('sel'));b.classList.add('sel');};
     });
     r.querySelector('[data-savematch]').onclick=()=>saveMatch(r);
     r.querySelector('[data-delmatch]').onclick=()=>delMatch(r);
@@ -437,13 +413,9 @@ async function addMatch(){
 async function saveMatch(r){
   const id=r.dataset.id;
   const r1=r.querySelector('[data-r1]').value, r2=r.querySelector('[data-r2]').value;
-  // Si cargás un resultado empatado, hay que indicar quién ganó por penales
-  let pen_winner=null;
-  if(r1!=='' && r2!=='' && parseInt(r1,10)===parseInt(r2,10)){
-    const sel=r.querySelector('[data-apen] .pen-opt.sel');
-    if(!sel){toast('Resultado empatado: marcá quién clasificó por penales');return;}
-    pen_winner=sel.dataset.apenOpt;
-  }
+  // Quién pasó (si lo marcaste)
+  const advSel=r.querySelector('[data-aadv] .pen-opt.sel');
+  const advanced = advSel ? advSel.dataset.aadvOpt : null;
   const upd={
     equipo1:r.querySelector('[data-e1]').value.trim(),
     equipo2:r.querySelector('[data-e2]').value.trim(),
@@ -452,7 +424,7 @@ async function saveMatch(r){
     activo:r.querySelector('[data-act]').checked,
     rg1:r1===''?null:parseInt(r1,10),
     rg2:r2===''?null:parseInt(r2,10),
-    pen_winner:pen_winner
+    advanced:advanced
   };
   const {error}=await sb.from('matches').update(upd).eq('id',id);
   if(error){toast('Error: '+error.message);return;}
